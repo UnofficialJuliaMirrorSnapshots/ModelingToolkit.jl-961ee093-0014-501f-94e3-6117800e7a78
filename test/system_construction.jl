@@ -1,4 +1,5 @@
 using ModelingToolkit, StaticArrays, LinearAlgebra
+using DiffEqBase
 using Test
 
 # Define some variables
@@ -32,7 +33,6 @@ eqs = [D(x) ~ σ*(y-x),
 de = ODESystem(eqs)
 test_diffeq_inference("standard", de, t, (x, y, z), (σ, ρ, β))
 generate_function(de, [x,y,z], [σ,ρ,β])
-generate_function(de, [x,y,z], [σ,ρ,β]; version=ModelingToolkit.SArrayFunction)
 jac_expr = generate_jacobian(de)
 jac = calculate_jacobian(de)
 jacfun = eval(jac_expr)
@@ -52,8 +52,8 @@ FWt = zeros(3, 3)
 fw(FW, u, p, 0.2, 0.1)
 fwt(FWt, u, p, 0.2, 0.1)
 # oop
-f = ODEFunction(de, [x,y,z], [σ,ρ,β]; version=ModelingToolkit.SArrayFunction)
-fw, fwt = map(eval, ModelingToolkit.generate_factorized_W(de; version=ModelingToolkit.SArrayFunction))
+f = ODEFunction(de, [x,y,z], [σ,ρ,β])
+fw, fwt = map(eval, ModelingToolkit.generate_factorized_W(de))
 du = @SArray zeros(3)
 u  = SVector(1:3...)
 p  = SVector(4:6...)
@@ -162,6 +162,7 @@ de = ODESystem(eqs)
     du = [0.0,0.0]
     f(du, [1.0,2.0], [1,2,3], 0.0)
     du ≈ [-1, -1/3]
+    du ≈ f([1.0,2.0], [1,2,3], 0.0)
 end
 
 # Now nonlinear system with only variables
@@ -198,3 +199,26 @@ ns = NonlinearSystem(eqs, [x,y,z])
 nlsys_func = generate_function(ns, [x,y,z], [σ,ρ,β])
 jac = calculate_jacobian(ns)
 jac = generate_jacobian(ns)
+
+function lotka(u,p,t)
+  x = u[1]
+  y = u[2]
+  [p[1]*x - p[2]*x*y,
+  -p[3]*y + p[4]*x*y]
+end
+
+prob = ODEProblem(ODEFunction{false}(lotka),[1.0,1.0],(0.0,1.0),[1.5,1.0,3.0,1.0])
+de, vars, params = modelingtoolkitize(prob)
+ODEFunction(de, vars, params)(similar(prob.u0), prob.u0, prob.p, 0.1)
+
+function lotka(du,u,p,t)
+  x = u[1]
+  y = u[2]
+  du[1] = p[1]*x - p[2]*x*y
+  du[2] = -p[3]*y + p[4]*x*y
+end
+
+prob = ODEProblem(lotka,[1.0,1.0],(0.0,1.0),[1.5,1.0,3.0,1.0])
+
+de, vars, params = modelingtoolkitize(prob)
+ODEFunction(de, vars, params)(similar(prob.u0), prob.u0, prob.p, 0.1)

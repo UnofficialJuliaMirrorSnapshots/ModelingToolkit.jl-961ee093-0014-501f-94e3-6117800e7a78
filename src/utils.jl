@@ -31,26 +31,32 @@ function flatten_expr!(x)
     x
 end
 
-function build_function(rhss, vs, ps, args = (), conv = rhs -> convert(Expr, rhs); version::FunctionVersion, constructor=nothing)
-    var_pairs   = [(u.name, :(u[$i])) for (i, u) ∈ enumerate(vs)]
-    param_pairs = [(p.name, :(p[$i])) for (i, p) ∈ enumerate(ps)]
+function build_function(rhss, vs, ps, args = (), conv = rhs -> convert(Expr, rhs); constructor=nothing)
+    _vs = map(x-> x isa Operation ? x.op : x, vs)
+    _ps = map(x-> x isa Operation ? x.op : x, ps)
+    var_pairs   = [(u.name, :(u[$i])) for (i, u) ∈ enumerate(_vs)]
+    param_pairs = [(p.name, :(p[$i])) for (i, p) ∈ enumerate(_ps)]
     (ls, rs) = zip(var_pairs..., param_pairs...)
 
     var_eqs = Expr(:(=), build_expr(:tuple, ls), build_expr(:tuple, rs))
 
-    if version === ArrayFunction
-        X = gensym()
-        sys_exprs = [:($X[$i] = $(conv(rhs))) for (i, rhs) ∈ enumerate(rhss)]
-        let_expr = Expr(:let, var_eqs, build_expr(:block, sys_exprs))
-        :(($X,u,p,$(args...)) -> $let_expr)
-    elseif version === SArrayFunction
-        sys_expr = build_expr(:tuple, [conv(rhs) for rhs ∈ rhss])
-        let_expr = Expr(:let, var_eqs, sys_expr)
-        :((u,p,$(args...)) -> begin
+    fname = gensym()
+
+    X = gensym()
+    ip_sys_exprs = [:($X[$i] = $(conv(rhs))) for (i, rhs) ∈ enumerate(rhss)]
+    ip_let_expr = Expr(:let, var_eqs, build_expr(:block, ip_sys_exprs))
+
+    sys_expr = build_expr(:tuple, [conv(rhs) for rhs ∈ rhss])
+    let_expr = Expr(:let, var_eqs, sys_expr)
+    quote
+        function $fname($X,u,p,$(args...))
+            $ip_let_expr
+        end
+        function $fname(u,p,$(args...))
             X = $let_expr
-            T = $(constructor === nothing ? :(StaticArrays.similar_type(typeof(u), eltype(X))) : constructor)
+            T = $(constructor === nothing ? :(u isa StaticArrays.StaticArray ? StaticArrays.similar_type(typeof(u), eltype(X)) : x->(du=similar(u, eltype(X)); du .= x)) : constructor)
             T(X)
-        end)
+        end
     end
 end
 
@@ -83,4 +89,28 @@ function vars!(vars, O)
     end
 
     return vars
+end
+
+"""
+$(SIGNATURES)
+
+Generate `ODESystem`, dependent variables, and parameters from an `ODEProblem`.
+"""
+function modelingtoolkitize(prob::DiffEqBase.ODEProblem)
+    t, = @parameters t; vars = [Variable(Symbol(:x, i))(t) for i in eachindex(prob.u0)]; params = [Variable(Symbol(:α, i); known = true)() for i in eachindex(prob.p)];
+    D, = @derivatives D'~t
+
+    rhs = [D(var) for var in vars]
+
+    if DiffEqBase.isinplace(prob)
+        lhs = similar(vars, Any)
+        prob.f(lhs, vars, params, t)
+    else
+        lhs = prob.f(vars, params, t)
+    end
+
+    eqs = vcat([rhs[i] ~ lhs[i] for i in eachindex(prob.u0)]...)
+    de = ODESystem(eqs)
+
+    de, vars, params
 end

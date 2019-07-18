@@ -152,16 +152,16 @@ function (f::ODEToExpr)(O::Operation)
 end
 (f::ODEToExpr)(x) = convert(Expr, x)
 
-function generate_jacobian(sys::ODESystem; version::FunctionVersion = ArrayFunction)
+function generate_jacobian(sys::ODESystem, dvs = sys.dvs, ps = sys.ps)
     jac = calculate_jacobian(sys)
-    return build_function(jac, sys.dvs, sys.ps, (sys.iv.name,), ODEToExpr(sys); version = version)
+    return build_function(jac, dvs, ps, (sys.iv.name,), ODEToExpr(sys))
 end
 
-function generate_function(sys::ODESystem, dvs, ps; version::FunctionVersion = ArrayFunction)
+function generate_function(sys::ODESystem, dvs = sys.dvs, ps = sys.ps)
     rhss = [deq.rhs for deq ∈ sys.eqs]
     dvs′ = [clean(dv) for dv ∈ dvs]
     ps′ = [clean(p) for p ∈ ps]
-    return build_function(rhss, dvs′, ps′, (sys.iv.name,), ODEToExpr(sys); version = version)
+    return build_function(rhss, dvs′, ps′, (sys.iv.name,), ODEToExpr(sys))
 end
 
 function calculate_factorized_W(sys::ODESystem, simplify=true)
@@ -188,22 +188,16 @@ function calculate_factorized_W(sys::ODESystem, simplify=true)
     (Wfact,Wfact_t)
 end
 
-function generate_factorized_W(sys::ODESystem, simplify=true; version::FunctionVersion = ArrayFunction)
+function generate_factorized_W(sys::ODESystem, vs = sys.dvs, ps = sys.ps, simplify=true)
     (Wfact,Wfact_t) = calculate_factorized_W(sys,simplify)
+    siz = size(Wfact)
+    constructor = :(x -> begin
+                        A = SMatrix{$siz...}(x)
+                        StaticArrays.LU(LowerTriangular( SMatrix{$siz...}(UnitLowerTriangular(A)) ), UpperTriangular(A), SVector(ntuple(n->n, max($siz...))))
+                    end)
 
-    if version === SArrayFunction
-        siz = size(Wfact)
-        constructor = :(x -> begin
-                            A = SMatrix{$siz...}(x)
-                            StaticArrays.LU(LowerTriangular( SMatrix{$siz...}(UnitLowerTriangular(A)) ), UpperTriangular(A), SVector(ntuple(n->n, max($siz...))))
-                        end)
-    else
-        constructor = nothing
-    end
-
-    vs, ps = sys.dvs, sys.ps
-    Wfact_func   = build_function(Wfact  , vs, ps, (:gam,:t), ODEToExpr(sys); version = version, constructor=constructor)
-    Wfact_t_func = build_function(Wfact_t, vs, ps, (:gam,:t), ODEToExpr(sys); version = version, constructor=constructor)
+    Wfact_func   = build_function(Wfact  , vs, ps, (:gam,:t), ODEToExpr(sys);constructor=constructor)
+    Wfact_t_func = build_function(Wfact_t, vs, ps, (:gam,:t), ODEToExpr(sys);constructor=constructor)
 
     return (Wfact_func, Wfact_t_func)
 end
@@ -215,16 +209,15 @@ Create an `ODEFunction` from the [`ODESystem`](@ref). The arguments `dvs` and `p
 are used to set the order of the dependent variable and parameter vectors,
 respectively.
 """
-function DiffEqBase.ODEFunction(sys::ODESystem, dvs, ps; version::FunctionVersion = ArrayFunction,
-                                                         jac = false, Wfact = false)
-    expr = eval(generate_function(sys, dvs, ps; version = version))
-    jac_expr = jac ? nothing : eval(generate_jacobian(sys))
-    Wfact_expr,Wfact_t_expr = Wfact ? (nothing,nothing) : eval.(calculate_factorized_W(sys))
-    if version === ArrayFunction
-        ODEFunction{true}(eval(expr),jac=jac_expr,
-                          Wfact = Wfact_expr, Wfact_t = Wfact_t_expr)
-    elseif version === SArrayFunction
-        ODEFunction{false}(eval(expr),jac=jac_expr,
-                           Wfact = Wfact_expr, Wfact_t = Wfact_t_expr)
-    end
+function DiffEqBase.ODEFunction{iip}(sys::ODESystem, dvs, ps;
+                                     version = nothing,
+                                     jac = false, Wfact = false) where iip
+    expr = eval(generate_function(sys, dvs, ps))
+    jac_expr = jac ? nothing : eval(generate_jacobian(sys, dvs, ps))
+    Wfact_expr,Wfact_t_expr = Wfact ? (nothing,nothing) : eval.(generate_factorized_W(sys, dvs, ps))
+    ODEFunction{iip}(eval(expr),jac=jac_expr,
+                      Wfact = Wfact_expr, Wfact_t = Wfact_t_expr)
+end
+function DiffEqBase.ODEFunction(sys::ODESystem, args...; kwargs...)
+    ODEFunction{true}(sys, args...; kwargs...)
 end
