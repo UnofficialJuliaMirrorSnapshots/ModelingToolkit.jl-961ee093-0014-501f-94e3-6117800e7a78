@@ -3,7 +3,8 @@ module ModelingToolkit
 export Operation, Expression
 export calculate_jacobian, generate_jacobian, generate_function
 export independent_variables, dependent_variables, parameters
-export @register
+export simplified_expr, eval_function
+export @register, @I
 export modelingtoolkitize
 
 
@@ -84,11 +85,12 @@ include("variables.jl")
 include("operations.jl")
 include("differentials.jl")
 include("equations.jl")
-include("systems/diffeqs/diffeqsystem.jl")
-include("systems/diffeqs/first_order_transform.jl")
-include("systems/nonlinear/nonlinear_system.jl")
 include("function_registration.jl")
 include("simplify.jl")
 include("utils.jl")
+include("direct.jl")
+include("systems/diffeqs/diffeqsystem.jl")
+include("systems/diffeqs/first_order_transform.jl")
+include("systems/nonlinear/nonlinear_system.jl")
 
 end # module

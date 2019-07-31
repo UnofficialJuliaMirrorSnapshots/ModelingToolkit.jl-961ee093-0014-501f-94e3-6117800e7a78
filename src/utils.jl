@@ -31,7 +31,7 @@ function flatten_expr!(x)
     x
 end
 
-function build_function(rhss, vs, ps, args = (), conv = rhs -> convert(Expr, rhs); constructor=nothing)
+function build_function(rhss, vs, ps = (), args = (), conv = simplified_expr; constructor=nothing)
     _vs = map(x-> x isa Operation ? x.op : x, vs)
     _ps = map(x-> x isa Operation ? x.op : x, ps)
     var_pairs   = [(u.name, :(u[$i])) for (i, u) ∈ enumerate(_vs)]
@@ -48,18 +48,22 @@ function build_function(rhss, vs, ps, args = (), conv = rhs -> convert(Expr, rhs
 
     sys_expr = build_expr(:tuple, [conv(rhs) for rhs ∈ rhss])
     let_expr = Expr(:let, var_eqs, sys_expr)
+
+    fargs = ps == () ? :(u,$(args...)) : :(u,p,$(args...))
     quote
-        function $fname($X,u,p,$(args...))
+        function $fname($X,$(fargs.args...))
             $ip_let_expr
+            nothing
         end
-        function $fname(u,p,$(args...))
+        function $fname($(fargs.args...))
             X = $let_expr
-            T = $(constructor === nothing ? :(u isa StaticArrays.StaticArray ? StaticArrays.similar_type(typeof(u), eltype(X)) : x->(du=similar(u, eltype(X)); du .= x)) : constructor)
-            T(X)
+            T = promote_type(map(typeof,X)...)
+            convert.(T,X)
+            construct = $(constructor === nothing ? :(u isa ModelingToolkit.StaticArrays.StaticArray ? ModelingToolkit.StaticArrays.similar_type(typeof(u), eltype(X)) : x->(du=similar(u, T, $(size(rhss)...)); vec(du) .= x; du)) : constructor)
+            construct(X)
         end
     end
 end
-
 
 is_constant(::Constant) = true
 is_constant(::Any) = false
@@ -91,26 +95,10 @@ function vars!(vars, O)
     return vars
 end
 
-"""
-$(SIGNATURES)
-
-Generate `ODESystem`, dependent variables, and parameters from an `ODEProblem`.
-"""
-function modelingtoolkitize(prob::DiffEqBase.ODEProblem)
-    t, = @parameters t; vars = [Variable(Symbol(:x, i))(t) for i in eachindex(prob.u0)]; params = [Variable(Symbol(:α, i); known = true)() for i in eachindex(prob.p)];
-    D, = @derivatives D'~t
-
-    rhs = [D(var) for var in vars]
-
-    if DiffEqBase.isinplace(prob)
-        lhs = similar(vars, Any)
-        prob.f(lhs, vars, params, t)
-    else
-        lhs = prob.f(vars, params, t)
-    end
-
-    eqs = vcat([rhs[i] ~ lhs[i] for i in eachindex(prob.u0)]...)
-    de = ODESystem(eqs)
-
-    de, vars, params
+@inline @generated function fast_invokelatest(f, ::Type{rt}, args...) where rt
+  tupargs = Expr(:tuple,(a==Nothing ? Int : a for a in args)...)
+  quote
+    _f = $(Expr(:cfunction, Base.CFunction, :f, rt, :((Core.svec)($((a==Nothing ? Int : a for a in args)...))), :(:ccall)))
+    return ccall(_f.ptr,rt,$tupargs,$((:(getindex(args,$i) === nothing ? 0 : getindex(args,$i)) for i in 1:length(args))...))
+  end
 end
