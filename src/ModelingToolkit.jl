@@ -8,12 +8,12 @@ export @register, @I
 export modelingtoolkitize
 
 
-using DiffEqBase
+using DiffEqBase, Distributed
 using StaticArrays, LinearAlgebra
 
 using MacroTools
 import MacroTools: splitdef, combinedef
-
+import GeneralizedGenerated
 using DocStringExtensions
 
 """
@@ -89,8 +89,10 @@ include("function_registration.jl")
 include("simplify.jl")
 include("utils.jl")
 include("direct.jl")
+include("domains.jl")
 include("systems/diffeqs/diffeqsystem.jl")
 include("systems/diffeqs/first_order_transform.jl")
 include("systems/nonlinear/nonlinear_system.jl")
+include("systems/pde/pdesystem.jl")
 
 end # module
