@@ -63,3 +63,7 @@ Base.convert(::Type{Operation}, x::Number) = Operation(identity, Expression[Cons
 Base.convert(::Type{Operation}, x::Operation) = x
 Base.convert(::Type{Operation}, x::Expression) = Operation(identity, Expression[x])
 Operation(x) = convert(Operation, x)
+
+#convert to Expr
+Base.Expr(op::Operation) = simplified_expr(op)
+Base.convert(::Type{Expr},x::Operation) = Expr(x)
